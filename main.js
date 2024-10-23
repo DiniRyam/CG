@@ -1,203 +1,180 @@
-import * as THREE from './js/three.module.js';
 
-// Função para criar a câmera, cena e renderização
-function createScene() {
+import { criarCena, adicionarCarro, adicionarPista, adicionarTerreno, criarArvore, adicionarGaragem, criarSol } from './scene.js';
 
-    const scene = new THREE.Scene();
+import * as THREE from './js/three.module.js';  // Certifique-se de importar a biblioteca THREE
 
-    const aspect = window.innerWidth / window.innerHeight;
-    const d = 60; 
-    
-    // Câmera ortográfica para criar efeito isométrico
-    const camera = new THREE.OrthographicCamera(
-        -d * aspect, // Esquerda
-        d * aspect,  // Direita
-        d,           // Cima
-        -d,          // Baixo
-        -200,        // perto
-        200         // longe
-    );
-    const renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-    return { scene, camera, renderer };
+const { cena, camera, renderizador } = criarCena();
+
+// "Banco de dados" para armazenar os elementos do projeto
+const bancoDeDados = {
+    terreno: null,
+    trilha: null,
+    carro: null,
+    garagem: null,
+    arvores: [],
+};
+
+bancoDeDados.terreno = adicionarTerreno(cena);
+bancoDeDados.trilha = adicionarPista(cena);
+bancoDeDados.carro = adicionarCarro(cena);
+bancoDeDados.garagem = adicionarGaragem(cena);
+
+const {sun, pointLight} = criarSol(cena);
+
+// Definir os limites da pista (baseados na elipse da pista)
+const raioExternoX = 91;
+const raioExternoZ = 31;
+const raioTerreno = 100;
+const numArvores = 100; // Número de árvores a serem geradas
+
+// Função para verificar se o ponto está fora da elipse da pista
+function estaForaDaPista(x, z, raioExternoX, raioExternoZ) {
+    return (x * x) / (raioExternoX * raioExternoX) + (z * z) / (raioExternoZ * raioExternoZ) > 1;
 }
 
-// o chão
-function addGroundToScene(scene) {
-    const groundTexture = new THREE.TextureLoader().load('grama.jpg');
-    groundTexture.wrapS = THREE.RepeatWrapping;
-    groundTexture.wrapT = THREE.RepeatWrapping;
-    groundTexture.repeat.set(20, 20);
+// Função para gerar árvores dentro do terreno, mas fora da pista
+function gerarArvoresAoRedorDaPista() {
+    for (let i = 0; i < numArvores; i++) {
+        let posicaoValida = false;
+        let x, z;
 
-    // chão redondo
-    const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(100, 100),
-        new THREE.MeshBasicMaterial({ map: groundTexture })
-    );
-    
-    ground.rotation.x = -Math.PI / 2; 
-    ground.position.y = 0;
-    scene.add(ground);
+        while (!posicaoValida) {
+            // Gerar posição aleatória dentro do terreno
+            const angulo = Math.random() * 2 * Math.PI;
+            const distancia = Math.random() * raioTerreno;  // Dentro do terreno
+
+            // Converter coordenadas polares para x e z
+            x = distancia * Math.cos(angulo);
+            z = distancia * Math.sin(angulo);
+
+            // Verificar se a árvore está fora da elipse da pista
+            if (estaForaDaPista(x, z, raioExternoX, raioExternoZ)) {
+                posicaoValida = true;  // A posição é válida se estiver fora da pista e dentro do terreno
+            }
+        }
+
+        // Criar e posicionar a árvore
+        const arvore = criarArvore(cena);
+        arvore.position.set(x, 0, z); // Posicionar a árvore fora da elipse, mas dentro do terreno
+        bancoDeDados.arvores.push(arvore);
+        cena.add(arvore); // Corrigido para adicionar a árvore corretamente à cena
+    }
 }
 
-function createOvalTrack(scene) {
-    const trackShape = new THREE.Shape();
+// Chamar a função para gerar as árvores ao redor da pista, mas dentro do terreno
+gerarArvoresAoRedorDaPista();
 
-    const outerRadiusX = 90; // externo x
-    const innerRadiusX = 70; // interno x
-    const innerRadiusZ = 20; // interno z  
-    const outerRadiusZ = 30; // externo z
-    const segments = 100;    // retas que formam a pista
+// Variáveis para controle do carro
+let velocidadeCarro = 0;
+let direcaoCarro = 0;
+const velocidadeMaximaCarro = 0.2;
+const velocidadeRotacaoCarro = 0.03;
+const distanciaCamera = 8;
+const teclas = {
+    cima: false,
+    esquerda: false,
+    direita: false,
+};
 
+document.addEventListener('keydown', (evento) => {
+    if (evento.code === 'ArrowUp') teclas.cima = true;
+    if (evento.code === 'ArrowLeft') teclas.esquerda = true;
+    if (evento.code === 'ArrowRight') teclas.direita = true;
+});
 
-    const innerPoints = [];
-    for (let i = 0; i <= segments; i++) {
-        const angle = (i / segments) * Math.PI * 2;
-        const x = Math.cos(angle) * innerRadiusX;
-        const z = Math.sin(angle) * innerRadiusZ;
-        innerPoints.push(new THREE.Vector2(x, z));
+document.addEventListener('keyup', (evento) => {
+    if (evento.code === 'ArrowUp') teclas.cima = false;
+    if (evento.code === 'ArrowLeft') teclas.esquerda = false;
+    if (evento.code === 'ArrowRight') teclas.direita = false;
+});
+
+// controle da câmera com o mouse
+let mouseApertado = false;
+let rotacaoInicial = 0;
+let rotacaoCamera = 0;
+
+// limite de rotação de 45 graus para cada lado
+const limiteRotacaoCamera = Math.PI / 4.5; 
+const velocidadeRotacaoMouse = 0.002; 
+document.addEventListener('mousedown', (evento) => {
+    mouseApertado = true;
+    rotacaoInicial = evento.clientX;
+});
+
+document.addEventListener('mouseup', () => {
+    mouseApertado = false;
+    rotacaoCamera = 0; 
+});
+
+document.addEventListener('mousemove', (evento) => {
+    if (mouseApertado) {
+        const deltaX = evento.clientX - rotacaoInicial;
+        rotacaoCamera = deltaX * velocidadeRotacaoMouse;
+        // Limitar a rotação da câmera dentro do limite definido
+        rotacaoCamera = Math.max(-limiteRotacaoCamera, Math.min(limiteRotacaoCamera, rotacaoCamera));
+    }
+});
+
+function animar() {
+    requestAnimationFrame(animar);
+
+    // Controle de aceleração do carro
+    if (teclas.cima) {
+        velocidadeCarro = Math.min(velocidadeMaximaCarro, velocidadeCarro + 0.01);
+    } else {
+        velocidadeCarro = Math.max(0, velocidadeCarro - 0.02);
     }
 
-    const outerPoints = [];
-    for (let i = 0; i <= segments; i++) {
-        const angle = (i / segments) * Math.PI * 2;
-        const x = Math.cos(angle) * outerRadiusX;
-        const z = Math.sin(angle) * outerRadiusZ;
-        outerPoints.push(new THREE.Vector2(x, z));
+    // Controle de rotação do carro
+    if (teclas.esquerda) {
+        direcaoCarro += velocidadeRotacaoCarro;
     }
-    
-    trackShape.setFromPoints(outerPoints.reverse().concat(innerPoints));
+    if (teclas.direita) {
+        direcaoCarro -= velocidadeRotacaoCarro;
+    }
 
+    if (bancoDeDados.carro) {
+        const novaPosicaoX = bancoDeDados.carro.position.x + Math.sin(direcaoCarro) * velocidadeCarro;
+        const novaPosicaoZ = bancoDeDados.carro.position.z + Math.cos(direcaoCarro) * velocidadeCarro;
 
-    const textureLoader = new THREE.TextureLoader();
-    const trackTexture = textureLoader.load(texturePath);
+        // Atualizar a posição do carro
+        bancoDeDados.carro.position.x = novaPosicaoX;
+        bancoDeDados.carro.position.z = novaPosicaoZ;
 
+        bancoDeDados.carro.rotation.y = direcaoCarro;
 
-    trackTexture.wrapS = THREE.RepeatWrapping;
-    trackTexture.wrapT = THREE.RepeatWrapping;
-    trackTexture.repeat.set(4, 4);
-
-    const trackMaterial = new THREE.MeshBasicMaterial({ map: trackTexture, side: THREE.DoubleSide });
-
-    const trackGeometry = new THREE.ShapeGeometry(trackShape);
-    const track = new THREE.Mesh(trackGeometry, trackMaterial);
-    track.rotation.x = -Math.PI / 2; 
-    track.position.y = 0.01;
-    scene.add(track);
-}
-
-// o carro
-function addCarToScene(scene) {
-    const car = new THREE.Group();
-
-    const backWheel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.5, 3.1, 32),
-        new THREE.MeshBasicMaterial({ color: 0x333333 })
-    );
-    backWheel.rotation.z = Math.PI / 2;
-    backWheel.position.set(0, 0, -1.5);
-    car.add(backWheel);
-
-    const frontWheel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.5, 3.1, 32),
-        new THREE.MeshBasicMaterial({ color: 0x333333 })
-    );
-    frontWheel.rotation.z = Math.PI / 2;
-    frontWheel.position.set(0, 0, 1.5);
-    car.add(frontWheel);
-
-    const main = new THREE.Mesh(
-        new THREE.BoxGeometry(3, 1, 5),
-        new THREE.MeshBasicMaterial({ color: 0xa52523 })
-    );
-    
-    main.position.set(0, 0.5, 0);
-    car.add(main);
-
-    const cabin = new THREE.Mesh(
-        new THREE.BoxGeometry(2.5, 1, 3),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
-    );
-    
-    cabin.position.set(0, 1.3, -0.4); 
-    car.add(cabin);
-
-    car.position.set(0, 0.5, 0);
-    scene.add(car);
-
-    return car;
-}
-
-// os controles
-function animate(car, camera, renderer, scene) {
-
-    let carSpeed = 0;
-    let carDirection = 0;
-    const carMaxSpeed = 0.25;
-    const carTurnSpeed = 0.05;
-    
-    const keys = {
-        up: false,
-        left: false,
-        right: false,
-    };
-
-    document.addEventListener('keydown', (event) => {
-        if (event.code === 'ArrowUp') keys.up = true;
-        if (event.code === 'ArrowLeft') keys.left = true;
-        if (event.code === 'ArrowRight') keys.right = true;
-    });
-
-    document.addEventListener('keyup', (event) => {
-        if (event.code === 'ArrowUp') keys.up = false;
-        if (event.code === 'ArrowLeft') keys.left = false;
-        if (event.code === 'ArrowRight') keys.right = false;
-    });
-
-    function update() {
-        requestAnimationFrame(update);
-
-        if (keys.up) {
-            carSpeed = Math.min(carMaxSpeed, carSpeed + 0.2);
+        // Atualizar a posição da câmera com rotação limitada ao redor do carro
+        if (mouseApertado) {
+            // Apenas rotaciona ao redor do carro no eixo Y (horizontalmente)
+            camera.position.x = bancoDeDados.carro.position.x - Math.sin(direcaoCarro + rotacaoCamera) * distanciaCamera;
+            camera.position.z = bancoDeDados.carro.position.z - Math.cos(direcaoCarro + rotacaoCamera) * distanciaCamera;
         } else {
-            carSpeed = Math.max(0, carSpeed - 0.2); 
+            // Câmera segue diretamente atrás do carro
+            camera.position.x = bancoDeDados.carro.position.x - Math.sin(direcaoCarro) * distanciaCamera;
+            camera.position.z = bancoDeDados.carro.position.z - Math.cos(direcaoCarro) * distanciaCamera;
         }
-
-        if (keys.left) {
-            carDirection += carTurnSpeed;
-        }
-        if (keys.right) {
-            carDirection -= carTurnSpeed;
-        }
-
-        car.position.x += Math.sin(carDirection) * carSpeed;
-        car.position.z += Math.cos(carDirection) * carSpeed;
-
-        let dist = Math.sqrt(car.position.x * car.position.x + car.position.z * car.position.z );
-        if (dist > 97.5){
-            car.position.x -= Math.sin(carDirection) * carSpeed;
-            car.position.z -= Math.cos(carDirection) * carSpeed;    
-        }
-
-        car.rotation.y = carDirection;
-
-        camera.position.x = 50;
-        camera.position.y = 30;
-        camera.position.z = 20 ;
-
-        camera.lookAt(0,0);
-
-        renderer.render(scene, camera);
+        camera.position.y = bancoDeDados.carro.position.y + 3;
+        camera.lookAt(bancoDeDados.carro.position);
     }
 
-    update(); 
+    const angle = performance.now() * 0.001;
+    const radius = 150;
+
+    // Atualizar a posição do sol para orbitar ao redor do centro (0, 0, 0)
+    sun.position.set(
+        radius * Math.sin(angle), // Movimento no eixo X
+        radius * Math.cos(angle), // Movimento no eixo Y
+        20                        // Altura fixa do sol (no eixo Z)
+    );
+
+    sun.position.copy(sun.position);
+    if (sun.position.y < -5) {
+        pointLight.intensity = 0;
+    } else {
+        pointLight.intensity = 500000;
+    }
+
+    renderizador.render(cena, camera);
 }
 
-
-const { scene, camera, renderer } = createScene();
-addGroundToScene(scene);
-const texturePath = 'estrada.jpg';
-createOvalTrack(scene); 
-const car = addCarToScene(scene);
-animate(car, camera, renderer, scene);
+animar();
