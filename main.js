@@ -1,7 +1,4 @@
-
-import { criarCena, adicionarCarro, adicionarPista, adicionarTerreno, criarArvore, adicionarGaragem, criarSol } from './scene.js';
-
-import * as THREE from './js/three.module.js';  // Certifique-se de importar a biblioteca THREE
+import { criarCena, adicionarCarro, adicionarPista, adicionarTerreno, criarArvore, adicionarGaragem, criarSol, adicionarParedao, configurarSom } from './scene.js';
 
 const { cena, camera, renderizador } = criarCena();
 
@@ -11,6 +8,7 @@ const bancoDeDados = {
     trilha: null,
     carro: null,
     garagem: null,
+    paredao: null,
     arvores: [],
 };
 
@@ -18,14 +16,15 @@ bancoDeDados.terreno = adicionarTerreno(cena);
 bancoDeDados.trilha = adicionarPista(cena);
 bancoDeDados.carro = adicionarCarro(cena);
 bancoDeDados.garagem = adicionarGaragem(cena);
-
-const {sun, pointLight} = criarSol(cena);
+bancoDeDados.paredao = adicionarParedao(cena);
+const { sol, luzPontual } = criarSol(cena);
+const sound = configurarSom(camera, bancoDeDados.paredao);
 
 // Definir os limites da pista (baseados na elipse da pista)
 const raioExternoX = 91;
 const raioExternoZ = 31;
 const raioTerreno = 100;
-const numArvores = 100; // Número de árvores a serem geradas
+const numArvores = 50; // Número de árvores a serem geradas
 
 // Função para verificar se o ponto está fora da elipse da pista
 function estaForaDaPista(x, z, raioExternoX, raioExternoZ) {
@@ -37,11 +36,10 @@ function gerarArvoresAoRedorDaPista() {
     for (let i = 0; i < numArvores; i++) {
         let posicaoValida = false;
         let x, z;
-
         while (!posicaoValida) {
             // Gerar posição aleatória dentro do terreno
             const angulo = Math.random() * 2 * Math.PI;
-            const distancia = Math.random() * raioTerreno;  // Dentro do terreno
+            const distancia = Math.random() * raioTerreno; // Dentro do terreno
 
             // Converter coordenadas polares para x e z
             x = distancia * Math.cos(angulo);
@@ -49,7 +47,7 @@ function gerarArvoresAoRedorDaPista() {
 
             // Verificar se a árvore está fora da elipse da pista
             if (estaForaDaPista(x, z, raioExternoX, raioExternoZ)) {
-                posicaoValida = true;  // A posição é válida se estiver fora da pista e dentro do terreno
+                posicaoValida = true; // A posição é válida se estiver fora da pista e dentro do terreno
             }
         }
 
@@ -67,9 +65,10 @@ gerarArvoresAoRedorDaPista();
 // Variáveis para controle do carro
 let velocidadeCarro = 0;
 let direcaoCarro = 0;
-const velocidadeMaximaCarro = 0.2;
+const velocidadeMaximaCarro = 0.3;
 const velocidadeRotacaoCarro = 0.03;
-const distanciaCamera = 8;
+const distanciaCamera = 10;
+
 const teclas = {
     cima: false,
     esquerda: false,
@@ -88,14 +87,13 @@ document.addEventListener('keyup', (evento) => {
     if (evento.code === 'ArrowRight') teclas.direita = false;
 });
 
-// controle da câmera com o mouse
+/// Controle da câmera com o mouse
 let mouseApertado = false;
 let rotacaoInicial = 0;
 let rotacaoCamera = 0;
+const limiteRotacaoCamera = Math.PI; 
+const velocidadeRotacaoMouse = 0.002;
 
-// limite de rotação de 45 graus para cada lado
-const limiteRotacaoCamera = Math.PI / 4.5; 
-const velocidadeRotacaoMouse = 0.002; 
 document.addEventListener('mousedown', (evento) => {
     mouseApertado = true;
     rotacaoInicial = evento.clientX;
@@ -114,6 +112,26 @@ document.addEventListener('mousemove', (evento) => {
         rotacaoCamera = Math.max(-limiteRotacaoCamera, Math.min(limiteRotacaoCamera, rotacaoCamera));
     }
 });
+
+let isPlaying = false;
+
+document.addEventListener('keydown', (evento) => {
+    if (evento.code === 'Space') {
+        if (isPlaying) {
+            sound.stop();
+        } else {
+            sound.play();
+        }
+        isPlaying = !isPlaying;
+    }
+});
+
+function verificarColisao(car, obj) {
+    const distancia = car.position.distanceTo(obj.position);
+    return distancia < 2; // Ajuste conforme necessário
+}
+
+let reboqueEngatado = false;
 
 function animar() {
     requestAnimationFrame(animar);
@@ -157,21 +175,56 @@ function animar() {
         camera.lookAt(bancoDeDados.carro.position);
     }
 
-    const angle = performance.now() * 0.001;
-    const radius = 150;
+    const angle = performance.now() * 0.00005; //velocidadde do sol
+    const radius = 200;
 
     // Atualizar a posição do sol para orbitar ao redor do centro (0, 0, 0)
-    sun.position.set(
-        radius * Math.sin(angle), // Movimento no eixo X
-        radius * Math.cos(angle), // Movimento no eixo Y
-        20                        // Altura fixa do sol (no eixo Z)
+    sol.position.set(
+        radius * Math.sin(angle),
+        //20, 
+        radius * Math.cos(angle), 
+        20
     );
 
-    sun.position.copy(sun.position);
-    if (sun.position.y < -5) {
-        pointLight.intensity = 0;
+    luzPontual.position.copy(sol.position);
+
+    sol.position.copy(sol.position);
+    if (sol.position.y < -2) {
+        luzPontual.intensity = 0;
     } else {
-        pointLight.intensity = 500000;
+        luzPontual.intensity = 90000;
+    }
+
+    // Atualizar a rotação e posição dos faróis dianteiros
+    const targetOffset = 50;
+    bancoDeDados.carro.children.forEach(child => {
+        if (child.isSpotLight) {
+            child.target.position.set(
+                bancoDeDados.carro.position.x + targetOffset * Math.sin(bancoDeDados.carro.rotation.y),
+                0.3,
+                bancoDeDados.carro.position.z + targetOffset * Math.cos(bancoDeDados.carro.rotation.y)
+            );
+        }
+    });
+
+    // Verificar colisão do carro com o paredão e engatar se necessário
+    if (!reboqueEngatado && verificarColisao(bancoDeDados.carro, bancoDeDados.paredao)) {
+        reboqueEngatado = true;
+    }
+
+    // Mover o paredão se estiver engatado
+    if (reboqueEngatado) {
+        const distanciaFixa = 3.2; // Distância fixa atrás do carro
+
+        // Calcular a posição desejada do paredão
+        const posX = bancoDeDados.carro.position.x - Math.sin(bancoDeDados.carro.rotation.y) * distanciaFixa;
+        const posZ = bancoDeDados.carro.position.z - Math.cos(bancoDeDados.carro.rotation.y) * distanciaFixa;
+    
+        // Atualizar a posição do paredão diretamente para acompanhar o carro
+        bancoDeDados.paredao.position.set(posX, 0, posZ);
+    
+        // Manter a mesma rotação do carro
+        bancoDeDados.paredao.rotation.y = bancoDeDados.carro.rotation.y;
     }
 
     renderizador.render(cena, camera);
